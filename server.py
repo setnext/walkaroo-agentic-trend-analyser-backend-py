@@ -1,8 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-import uvicorn
 from app.similar_products import ImageSearchService
+from app.image_engineering import router as image_router
 
 # -------------------------------------------------
 # App setup
@@ -11,12 +10,14 @@ app = FastAPI(title="Image Similarity API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Include image engineering routes
+app.include_router(image_router)
 
 
 @app.get("/")
@@ -36,7 +37,10 @@ async def get_similar_products(file: UploadFile = File(...)):
 
     try:
         searcher = ImageSearchService()
-        results = searcher.search_similar_images(image_bytes, filename=file.filename)
+        results = searcher.search_similar_images(
+            image_bytes,
+            filename=file.filename
+        )
         return {"results": results}
 
     except Exception as e:
