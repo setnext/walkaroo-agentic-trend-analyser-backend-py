@@ -1,0 +1,12 @@
+# virtual env
+venv/
+
+# env secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+
+# playwright cache
+playwright/.cache/
