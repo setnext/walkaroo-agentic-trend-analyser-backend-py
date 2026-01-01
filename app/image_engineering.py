@@ -7,6 +7,7 @@ import json
 import re
 import os
 import requests
+from fastapi.staticfiles import StaticFiles 
 
 # =========================================================
 # ROUTER SETUP
@@ -33,7 +34,7 @@ print("=" * 60)
 # OPENAI CLIENT
 # =========================================================
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+STATIC_FILES_PATH = STATIC_DIR
 # =========================================================
 # SIZE → SOLE LENGTH
 # =========================================================
