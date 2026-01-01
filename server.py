@@ -6,6 +6,11 @@ from fastapi.responses import JSONResponse
 from fastapi import status
 from app.scraper import scrape_products_pipeline
 from app.models.models import ScrapeRequest, ScrapeResponse
+from fastapi.staticfiles import StaticFiles  # ⭐ ADD THIS
+from app.similar_products import ImageSearchService
+from app.image_engineering import router as image_router, STATIC_FILES_PATH  # ⭐ IMPORT STATIC_FILES_PATH
+from fastapi.responses import JSONResponse
+import os
 
 
 # -------------------------------------------------
