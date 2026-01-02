@@ -28,6 +28,7 @@ app.add_middleware(
 
 # Include image engineering routes
 app.include_router(image_router)
+app.mount("/image/static", StaticFiles(directory=STATIC_FILES_PATH), name="static")
 
 
 @app.get("/")
