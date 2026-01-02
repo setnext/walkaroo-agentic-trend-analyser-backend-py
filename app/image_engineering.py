@@ -17,7 +17,6 @@ router = APIRouter(prefix="/image", tags=["Image Engineering"])
 # =========================================================
 # PATH SETUP
 # =========================================================
-# Get the root directory (parent of app/)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(ROOT_DIR, "app", "static")
 
@@ -35,6 +34,7 @@ print("=" * 60)
 # =========================================================
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 STATIC_FILES_PATH = STATIC_DIR
+
 # =========================================================
 # SIZE → SOLE LENGTH
 # =========================================================
@@ -152,7 +152,7 @@ async def replace(
     print("\n" + "=" * 60)
     print("📥 IMAGE REPLACE REQUEST")
     print("=" * 60)
-    print("Image URL:", image_url)
+    print("Image URL (received):", image_url)
     print("Prompt:", prompt)
     print("Size:", size)
 
@@ -166,26 +166,51 @@ async def replace(
             filename = image_url.split("/")[-1]
             local_path = os.path.join(STATIC_DIR, filename)
             
+            print(f"📂 Attempting to read local file: {local_path}")
+            
             if os.path.exists(local_path):
-                print(f"📂 Reading local file: {local_path}")
+                print(f"✅ Local file found")
                 with open(local_path, "rb") as f:
                     base_image = f.read()
             else:
+                print(f"❌ Local file not found: {filename}")
                 return JSONResponse(
                     status_code=400,
                     content={"error": f"Local file not found: {filename}"}
                 )
         else:
             # Download from external URL
-            print(f"⬇️ Downloading from: {image_url}")
-            resp = requests.get(image_url, timeout=15)
+            print(f"⬇️ Downloading from external URL...")
+            print(f"   URL: {image_url}")
+            
+            # Use the original URL without modification
+            resp = requests.get(image_url, timeout=15, allow_redirects=True)
+            
+            print(f"   Response status: {resp.status_code}")
+            
             if resp.status_code != 200:
                 return JSONResponse(
                     status_code=400,
-                    content={"error": f"Failed to download image: HTTP {resp.status_code}"}
+                    content={
+                        "error": f"Failed to download image: HTTP {resp.status_code}",
+                        "url": image_url
+                    }
                 )
+            
             base_image = resp.content
+            print(f"✅ Downloaded {len(base_image)} bytes")
+            
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Request failed: {str(e)}")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": f"Failed to download image: {str(e)}",
+                "url": image_url
+            }
+        )
     except Exception as e:
+        print(f"❌ Unexpected error: {str(e)}")
         return JSONResponse(
             status_code=400,
             content={"error": f"Failed to get image: {str(e)}"}
@@ -195,7 +220,9 @@ async def replace(
     # OpenAI Image Edit
     # ---------------------------------
     try:
+        print("\n🎨 Starting OpenAI image edit...")
         edit_prompt = build_size_aware_prompt(prompt, size)
+        print(f"   Full prompt: {edit_prompt}")
 
         result = client.images.edit(
             model="gpt-image-1",
@@ -205,7 +232,12 @@ async def replace(
         )
 
         edited_image = base64.b64decode(result.data[0].b64_json)
+        print(f"✅ Image edited successfully ({len(edited_image)} bytes)")
+        
     except Exception as e:
+        print(f"❌ OpenAI edit failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"error": f"Image editing failed: {str(e)}"}
@@ -218,24 +250,18 @@ async def replace(
     filename = f"{image_id}_edited.png"
     edited_path = os.path.join(STATIC_DIR, filename)
     
-    print("\n🔍 SAVE DIAGNOSTICS:")
-    print("   STATIC_DIR:", STATIC_DIR)
-    print("   Filename:", filename)
-    print("   Full path:", edited_path)
+    print("\n💾 Saving edited image...")
+    print(f"   Path: {edited_path}")
     
     try:
         with open(edited_path, "wb") as f:
             f.write(edited_image)
 
-        print("✅ Saved edited image")
-        print("✅ File exists:", os.path.exists(edited_path))
-        print("✅ File size:", os.path.getsize(edited_path), "bytes")
+        print("✅ Saved successfully")
+        print(f"   File size: {os.path.getsize(edited_path)} bytes")
         
-        # List files in static dir to verify
-        files_in_static = os.listdir(STATIC_DIR)
-        print("✅ Total files in STATIC_DIR:", len(files_in_static))
     except Exception as e:
-        print(f"❌ SAVE ERROR: {str(e)}")
+        print(f"❌ Save failed: {str(e)}")
         import traceback
         traceback.print_exc()
         return JSONResponse(
@@ -247,13 +273,11 @@ async def replace(
     # Generate BOM
     # ---------------------------------
     try:
-        print("🔄 Generating BOM...")
+        print("\n🔄 Generating BOM...")
         bom = generate_bom_from_image(edited_image)
         print("✅ BOM generated successfully")
     except Exception as e:
         print(f"⚠️ BOM generation failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
         bom = {
             "product_name": "Unknown Product",
             "components": []
@@ -273,7 +297,7 @@ async def replace(
     }
     
     print("\n📤 RESPONSE:")
-    print("   URL:", f"http://127.0.0.1:8000/image/static/{filename}")
+    print(f"   URL: http://127.0.0.1:8000/image/static/{filename}")
     print("=" * 60 + "\n")
 
     return JSONResponse(response_data)
