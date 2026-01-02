@@ -6,3 +6,5 @@ python-dotenv
 boto3
 openai
 Pillow
+playwright==1.40.0
+beautifulsoup4==4.12.2
