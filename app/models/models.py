@@ -1,189 +1,150 @@
-# ============================================================================
-# FILE: app/models.py
-# Pydantic models for request/response validation
-# ============================================================================
+from pydantic import BaseModel, Field, HttpUrl, validator
+from typing import Optional, List
+from datetime import datetime
+from enum import Enum
 
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional, Dict, Any
-
-# Website configurations (import from scraper or define here)
-WEBSITES = {
-    'flipkart': {'base': 'https://www.flipkart.com/search?q=', 'domain': 'flipkart.com'},
-    'reliancedigital': {'base': 'https://www.reliancedigital.in/search?q=', 'domain': 'reliancedigital.in'},
-    'myntra': {'base': 'https://www.myntra.com/', 'domain': 'myntra.com'},
-    'amazon': {'base': 'https://www.amazon.in/s?k=', 'domain': 'amazon.in'}
-}
-
-
-# ============================================================================
-# REQUEST MODELS
-# ============================================================================
-
-class Filters(BaseModel):
-    """Filter criteria for product search"""
-    brand: List[str] = Field(..., min_items=1, description="List of brands (required)")
-    size: Optional[List[str]] = Field(default=None, description="Shoe sizes")
-    color: Optional[List[str]] = Field(default=None, description="Color preferences")
-    gender: Optional[List[str]] = Field(default=None, description="Gender filter")
-    category: Optional[str] = Field(default="", description="Product category")
+class WebsiteEnum(str, Enum):
+    """Supported e-commerce websites"""
+    flipkart = "flipkart"
+    amazon = "amazon"
+    myntra = "myntra"
+    reliancedigital = "reliancedigital"
     
-    # Normalize inputs
-    @validator('brand', 'size', 'color', 'gender', pre=True)
-    def normalize_list_fields(cls, v):
-        """Normalize list fields - trim whitespace and handle empty strings"""
-        if v is None:
-            return None
-        if isinstance(v, list):
-            return [str(item).strip() for item in v if item and str(item).strip()]
-        return v
-    
-    @validator('category', pre=True)
-    def normalize_category(cls, v):
-        """Normalize category - trim whitespace"""
-        if v is None:
-            return ""
-        return str(v).strip()
+class PriceRange(BaseModel):
+    """Price range filter"""
+    min: Optional[float] = Field(default=0, ge=0, description="Minimum price")
+    max: Optional[float] = Field(default=None, ge=0, description="Maximum price")
     
     class Config:
-        json_schema_extra = {
+        schema_extra = {
             "example": {
-                "brand": ["bata"],
-                "size": ["9"],
-                "color": ["Black"],
-                "gender": ["womens"],
-                "category": "slippers"
+                "min": 500,
+                "max": 2000
             }
         }
 
 
-class ScrapeRequest(BaseModel):
-    """Request model for scraping endpoint"""
-    website: str = Field(default="flipkart", description="Website to scrape")
-    filters: Filters
-    
-    @validator('website', pre=True)
-    def validate_website(cls, v):
-        """Validate and normalize website name"""
-        if not v:
-            return "flipkart"
-        
-        website_lower = v.lower().strip()
-        
-        if website_lower not in WEBSITES:
-            raise ValueError(
-                f"Website '{v}' is not supported. "
-                f"Must be one of: {', '.join(WEBSITES.keys())}"
-            )
-        return website_lower
+class ProductFilters(BaseModel):
+    """Filter criteria for product search"""
+    brand: List[str] = Field(..., min_items=1, description="At least one brand required")
+    size: Optional[List[str]] = Field(default=None, description="Shoe sizes (e.g., ['8', '9', '10'])")
+    color: Optional[List[str]] = Field(default=None, description="Colors (e.g., ['Black', 'White'])")
+    gender: Optional[List[str]] = Field(default=None, description="Gender (e.g., ['Men', 'Women'])")
+    category: Optional[str] = Field(default="", description="Product category (e.g., 'sports shoes')")
+    price_range: Optional[PriceRange] = Field(default=None, description="Price range filter")
     
     class Config:
-        json_schema_extra = {
+        schema_extra = {
             "example": {
-                "website": "amazon",
-                "filters": {
-                    "brand": ["bata"],
-                    "size": ["9"],
-                    "color": ["Black"],
-                    "gender": ["womens"],
-                    "category": "slippers"
+                "brand": ["Nike", "Adidas"],
+                "size": ["8", "9", "10"],
+                "color": ["Black", "White"],
+                "gender": ["Men"],
+                "category": "sports shoes",
+                "price_range": {
+                    "min_price": 200,
+                    "max_price": 5000
                 }
             }
         }
 
 
-# ============================================================================
-# RESPONSE MODELS
-# ============================================================================
-
-class Product(BaseModel):
-    """Product model"""
-    id: str
-    name: str
-    brand: str
-    price: float
-    original_price: float
-    discount: int
-    image_url: str
-    product_url: str
-    rating: float
-    reviews: int
-    gender: str
-    size: str
-    colour: str
-    in_stock: bool
-    is_trending: bool
-    category: str
-    savings: float
-    scraped_at: str
-    currency: str = "INR"
+class ScrapeRequest(BaseModel):
+    """API request model for scraping"""
+    website: WebsiteEnum = Field(default=WebsiteEnum.flipkart, description="E-commerce website to scrape")
+    filters: ProductFilters = Field(..., description="Product filters")
+    max_results: Optional[int] = Field(default=30, ge=1, le=100, description="Maximum products to fetch")
     
     class Config:
-        json_schema_extra = {
+        schema_extra = {
             "example": {
-                "id": "prod_0001",
-                "name": "Bata Women's Black Slippers",
-                "brand": "Bata",
-                "price": 599.0,
-                "original_price": 999.0,
-                "discount": 40,
-                "image_url": "https://example.com/image.jpg",
-                "product_url": "https://amazon.in/product/123",
-                "rating": 4.2,
-                "reviews": 145,
-                "gender": "Women",
-                "size": "9",
-                "colour": "Black",
-                "in_stock": True,
-                "is_trending": False,
-                "category": "slippers",
-                "savings": 400.0,
-                "scraped_at": "2025-01-01 10:30:45",
-                "currency": "INR"
+                "website": "flipkart",
+                "filters": {
+                    "brand": ["Nike"],
+                    "size": ["9"],
+                    "color": ["Black"],
+                    "gender": ["Men"],
+                    "category": "slippers"
+                },
+                "max_results": 50
             }
         }
+
+
+class ProductCategory(str, Enum):
+    """Product categorization for trending/top-selling"""
+    TRENDING = "trending"
+    TOP_SELLING = "top_selling"
+    NORMAL = "normal"
+
+
+class Product(BaseModel):
+    """Product data model - all fields optional except core ones to prevent dropping products"""
+    id: Optional[str] = Field(default=None)
+    name: Optional[str] = Field(default="Unknown Product")
+    brand: Optional[str] = Field(default="Unknown")
+    price: Optional[float] = Field(default=0.0, ge=0)
+    original_price: Optional[float] = Field(default=0.0, ge=0)
+    discount: Optional[int] = Field(default=0, ge=0, le=100)
+    savings: Optional[float] = Field(default=0.0, ge=0)
+    image_url: Optional[str] = Field(default=None)
+    product_url: Optional[str] = Field(default=None)
+    rating: Optional[float] = Field(default=0.0, ge=0, le=5)
+    reviews: Optional[int] = Field(default=0, ge=0)
+    gender: Optional[str] = Field(default="Unknown")
+    size: Optional[str] = Field(default="Unknown")
+    colour: Optional[str] = Field(default="Unknown")
+    category: Optional[str] = Field(default="footwear")
+    in_stock: Optional[bool] = Field(default=True)
+    availability_status: Optional[str] = Field(default="in_stock")  # in_stock, out_of_stock, limited_stock
+    is_trending: Optional[bool] = Field(default=False)
+    product_classification: Optional[ProductCategory] = Field(default=ProductCategory.NORMAL)
+    scraped_at: Optional[str] = Field(default=None)
+    currency: Optional[str] = Field(default="INR")
+    source_website: Optional[str] = Field(default=None)
+    
+    @validator('image_url', pre=True, always=True)
+    def validate_image_url(cls, v):
+        """Ensure image URL is valid or use placeholder"""
+        if not v or not isinstance(v, str) or not v.startswith('http'):
+            return 'https://via.placeholder.com/600x600?text=No+Image'
+        return v
+    
+    @validator('product_url', pre=True, always=True)
+    def validate_product_url(cls, v):
+        """Ensure product URL is valid"""
+        if not v or not isinstance(v, str) or not v.startswith('http'):
+            return '#'
+        return v
+    
+    @validator('original_price', pre=True, always=True)
+    def validate_original_price(cls, v, values):
+        """Set original_price to price if not provided"""
+        if not v or v == 0:
+            return values.get('price', 0)
+        return v
+    
+    @validator('availability_status', pre=True, always=True)
+    def set_availability_status(cls, v, values):
+        """Set availability status based on in_stock"""
+        in_stock = values.get('in_stock', True)
+        if v:
+            return v
+        return "in_stock" if in_stock else "out_of_stock"
+    
+    class Config:
+        use_enum_values = True
 
 
 class ScrapeResponse(BaseModel):
-    """Response model for successful scraping"""
-    success: bool = True
-    website: str
-    filters_applied: Dict[str, Any]
-    total_products: int
-    products: List[Product]
-    timestamp: str
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": True,
-                "website": "amazon",
-                "filters_applied": {
-                    "brand": ["bata"],
-                    "size": ["9"],
-                    "color": ["Black"],
-                    "gender": ["womens"],
-                    "category": "slippers"
-                },
-                "total_products": 12,
-                "products": [
-                    {
-                        "id": "prod_0001",
-                        "name": "Bata Women's Black Slippers",
-                        "brand": "Bata",
-                        "price": 599.0,
-                        "original_price": 999.0,
-                        "discount": 40,
-                        "rating": 4.2,
-                        "reviews": 145,
-                        "size": "9",
-                        "colour": "Black",
-                        "in_stock": True,
-                        "category": "slippers"
-                    }
-                ],
-                "timestamp": "2025-01-01 10:30:45"
-            }
-        }
+    """API response model"""
+    success: bool = Field(..., description="Whether the scraping was successful")
+    website: str = Field(..., description="Website that was scraped")
+    filters_applied: ProductFilters = Field(..., description="Filters that were applied")
+    total_products: int = Field(..., description="Total number of products found")
+    products: List[Product] = Field(default=[], description="List of products")
+    timestamp: str = Field(..., description="Timestamp of the response")
+    error: Optional[str] = Field(default=None, description="Error message if any")
 
 
 class HealthResponse(BaseModel):
@@ -192,68 +153,18 @@ class HealthResponse(BaseModel):
     openai_configured: bool
     google_configured: bool
     websites: List[str]
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "status": "healthy",
-                "openai_configured": True,
-                "google_configured": True,
-                "websites": ["flipkart", "amazon", "myntra", "reliancedigital"]
-            }
-        }
-
-
-class ErrorResponse(BaseModel):
-    """Error response model"""
-    success: bool = False
-    error: str
-    detail: Optional[str] = None
     timestamp: str
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": False,
-                "error": "No products found matching the given filters",
-                "detail": "Try adjusting your filter criteria",
-                "timestamp": "2025-01-01 10:30:45"
-            }
-        }
 
 
-class WebsitesResponse(BaseModel):
-    """Response model for supported websites"""
-    success: bool = True
-    websites: List[str]
-    total: int
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": True,
-                "websites": ["flipkart", "amazon", "myntra", "reliancedigital"],
-                "total": 4
-            }
-        }
+class SearchResult(BaseModel):
+    """Internal model for search results"""
+    url: str
+    title: str
 
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
+class ScrapedPage(BaseModel):
+    """Internal model for scraped pages"""
+    url: str
+    title: str
+    html: str
 
-def get_supported_websites() -> List[str]:
-    """Get list of supported websites"""
-    return list(WEBSITES.keys())
-
-
-def validate_filters(filters: Dict[str, Any]) -> bool:
-    """Validate filter dictionary"""
-    if not filters:
-        return False
-    
-    # Brand is required
-    if not filters.get('brand') or len(filters.get('brand', [])) == 0:
-        return False
-    
-    return True

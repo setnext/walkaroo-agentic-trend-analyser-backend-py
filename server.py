@@ -4,14 +4,26 @@ from app.similar_products import ImageSearchService
 from app.image_engineering import router as image_router
 from fastapi.responses import JSONResponse
 from fastapi import status
-from app.scraper import scrape_products_pipeline
+from app.scraper import scrape_products
 from app.models.models import ScrapeRequest, ScrapeResponse
 from fastapi.staticfiles import StaticFiles  # ⭐ ADD THIS
 from app.similar_products import ImageSearchService
 from app.image_engineering import router as image_router, STATIC_FILES_PATH  # ⭐ IMPORT STATIC_FILES_PATH
 from fastapi.responses import JSONResponse
+import time
 import os
+import logging
+import requests
+from starlette.responses import StreamingResponse, Response
+from urllib.parse import unquote
 
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
 # App setup
@@ -57,23 +69,11 @@ async def get_similar_products(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/scrape", response_model=ScrapeResponse, tags=["Scraping"])
-async def scrape_products(request: ScrapeRequest):
+async def scrape_products_endpoint(request: ScrapeRequest):
     """
-    Main scraping endpoint with filter support
+    Main product scraping endpoint
     
     **Request Body:**
-    - `website`: Website to scrape (flipkart, amazon, myntra, reliancedigital)
-    - `filters`: Filter criteria
-        - `brand`: List of brands (REQUIRED)
-        - `size`: List of sizes (optional)
-        - `color`: List of colors (optional)
-        - `gender`: List of genders (optional)
-        - `category`: Product category (optional)
-    
-    **Returns:**
-    - List of matching products with full details
-    
-    **Example:**
     ```json
     {
         "website": "flipkart",
@@ -83,46 +83,144 @@ async def scrape_products(request: ScrapeRequest):
             "color": ["Black", "White"],
             "gender": ["Men"],
             "category": "sports shoes"
-        }
+        },
+        "max_results": 50
     }
+    ```
+    
+    **Features:**
+    - Searches Google for product URLs
+    - Scrapes product pages in parallel
+    - Extracts data using AI
+    - Filters and validates products
+    - Classifies products (trending/top-selling/normal)
+    - Returns products with availability status
+    - Handles out-of-stock products correctly
+    - Deduplicates results
+    
+    **Returns:**
+    - List of products matching the filters
+    - Includes in-stock and out-of-stock products
+    - Images can be loaded via `/api/image-proxy` endpoint
+    """
+    try:
+        logger.info(f"Scrape request: {request.website}, filters: {request.filters.dict()}")
+        
+        # Validate
+        if not request.filters.brand:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one brand is required in filters"
+            )
+        
+        # Scrape products
+        start_time = time.time()
+        products = scrape_products(
+            website=request.website.value,
+            filters=request.filters,
+            max_results=request.max_results
+        )
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"Scraping completed in {elapsed_time:.2f}s, found {len(products)} products")
+        
+        # Build response
+        response = ScrapeResponse(
+            success=True,
+            website=request.website.value,
+            filters_applied=request.filters,
+            total_products=len(products),
+            products=products,
+            timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
+            error=None
+        )
+        
+        return response
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Scraping error: {str(e)}", exc_info=True)
+        
+        return ScrapeResponse(
+            success=False,
+            website=request.website.value if request.website else "unknown",
+            filters_applied=request.filters,
+            total_products=0,
+            products=[],
+            timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
+            error=str(e)
+        )
+
+
+# ============================================================================
+# IMAGE PROXY ENDPOINT
+# ============================================================================
+
+@app.get("/api/image-proxy", tags=["Utilities"])
+async def image_proxy(url: str):
+    """
+    Image proxy endpoint to serve product images through backend
+    
+    **Purpose:**
+    - Fixes Amazon/Flipkart image loading issues
+    - Handles URL encoding problems
+    - Prevents CORS errors
+    - Caches images on backend
+    
+    **Usage:**
+    ```
+    GET /api/image-proxy?url=https://m.media-amazon.com/images/I/51abc+xyz.jpg
+    ```
+    
+    **Frontend Usage:**
+    ```javascript
+    const proxyUrl = `/api/image-proxy?url=${encodeURIComponent(product.image_url)}`;
+    <img src={proxyUrl} alt="Product" />
     ```
     """
     try:
-        # Convert Pydantic model to dict
-        filters_dict = request.filters.dict(exclude_none=True)
+        if not url or not url.startswith('http'):
+            raise HTTPException(status_code=400, detail="Invalid image URL")
         
-        # Run scraping pipeline
-        result = await scrape_products_pipeline(
-            filters=filters_dict,
-            website=request.website
+        # Decode URL if needed
+        decoded_url = unquote(url)
+        
+        logger.info(f"Proxying image: {decoded_url[:100]}")
+        
+        # Fetch image with proper headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.amazon.in/' if 'amazon' in url else 'https://www.flipkart.com/'
+        }
+        
+        response = requests.get(decoded_url, headers=headers, timeout=10, stream=True)
+        response.raise_for_status()
+        
+        # Get content type
+        content_type = response.headers.get('Content-Type', 'image/jpeg')
+        
+        # Stream response
+        return StreamingResponse(
+            response.iter_content(chunk_size=8192),
+            media_type=content_type,
+            headers={
+                'Cache-Control': 'public, max-age=86400',  # Cache for 24 hours
+                'Access-Control-Allow-Origin': '*'
+            }
         )
         
-        # Check if scraping was successful
-        if not result.get('success', False):
-            error_msg = result.get('error', 'Unknown error occurred')
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
-            )
-        
-        # Check if no products found
-        if result.get('total_products', 0) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No products found matching the given filters"
-            )
-        
-        return JSONResponse(content=result, status_code=status.HTTP_200_OK)
-        
-    except HTTPException:
-        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Image proxy error: {str(e)}")
+        # Return placeholder image on error
+        placeholder_url = "https://via.placeholder.com/600x600?text=Image+Not+Available"
+        placeholder_response = requests.get(placeholder_url)
+        return Response(
+            content=placeholder_response.content,
+            media_type="image/png"
+        )
     except Exception as e:
-        import traceback
-        error_detail = traceback.format_exc()
-        print(f"\n❌ ERROR: {e}")
-        print(error_detail)
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        logger.error(f"Unexpected error in image proxy: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Image proxy error: {str(e)}")
